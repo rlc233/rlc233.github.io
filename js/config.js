@@ -12,7 +12,7 @@ export const CONFIG = {
   R2_PUBLIC_URL: 'PON_AQUI_LA_URL_PUBLICA_DE_R2',
 
   // PENDIENTE · clave pública VAPID para los avisos al móvil (ver README).
-  VAPID_PUBLIC_KEY: 'PON_AQUI_LA_CLAVE_PUBLICA_VAPID',
+  VAPID_PUBLIC_KEY: 'BE1JYgvs2z9icJ7XdGRTdxoc8LSzTRwQICHoXwuPHcwRi-ZSB6P1nfyQJVpjn-UZdTE5knhn4_C3u7HrFsHnVos',
 
   BRAND: 'RLC233',
   MAX_SIDE: 1000,       // lado largo máximo de las fotos subidas (px)
