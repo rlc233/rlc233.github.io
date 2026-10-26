@@ -1,5 +1,15 @@
 import { CONFIG } from './config.js';
 
+// Ajustes de la marca de agua (súbelos para más marca, bájalos para menos)
+const WM = {
+  tileSize: 0.04,   // tamaño del texto del mosaico (fracción del lado corto)
+  tileAlpha: 0.16,  // opacidad del mosaico
+  gapX: 11,         // separación horizontal (en tamaños de texto)
+  gapY: 7.5,        // separación vertical
+  bigSize: 0.12,    // tamaño de la marca central
+  bigAlpha: 0.12,   // opacidad de la marca central
+};
+
 // Reduce la foto y le graba la marca de agua en mosaico (queda dentro de la imagen).
 export async function watermark(file) {
   const bmp = await createImageBitmap(file, { imageOrientation: 'from-image' });
@@ -25,9 +35,9 @@ export async function watermark(file) {
   };
 
   // Mosaico diagonal por toda la imagen
-  const size = Math.max(14, Math.round(Math.min(w, h) * 0.055));
-  const draw = mark(size, 'rgba(255,255,255,0.34)', 'rgba(0,0,0,0.22)');
-  const stepX = size * 7.5, stepY = size * 4.5;
+  const size = Math.max(12, Math.round(Math.min(w, h) * WM.tileSize));
+  const draw = mark(size, `rgba(255,255,255,${WM.tileAlpha})`, `rgba(0,0,0,${WM.tileAlpha * 0.6})`);
+  const stepX = size * WM.gapX, stepY = size * WM.gapY;
   const R = Math.hypot(w, h) / 2;
   g.save();
   g.translate(w / 2, h / 2);
@@ -41,7 +51,7 @@ export async function watermark(file) {
   g.restore();
 
   // Marca grande en el centro
-  const big = mark(Math.round(Math.min(w, h) * 0.2), 'rgba(255,255,255,0.22)', 'rgba(0,0,0,0.16)');
+  const big = mark(Math.round(Math.min(w, h) * WM.bigSize), `rgba(255,255,255,${WM.bigAlpha})`, `rgba(0,0,0,${WM.bigAlpha * 0.6})`);
   g.save(); g.translate(w / 2, h / 2); g.rotate(-Math.PI / 7); big(); g.restore();
 
   const blob = await new Promise((res) => c.toBlob(res, 'image/jpeg', CONFIG.JPEG_QUALITY));

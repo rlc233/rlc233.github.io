@@ -27,9 +27,11 @@ Deno.serve(async (req) => {
     try {
       const pub = Deno.env.get("VAPID_PUBLIC_KEY"), priv = Deno.env.get("VAPID_PRIVATE_KEY");
       const subject = Deno.env.get("VAPID_SUBJECT");
+      if (!pub || !priv || !subject) console.warn("push: faltan secretos VAPID, no se envía aviso");
       if (pub && priv && subject) {
         webpush.setVapidDetails(subject, pub, priv);
         const { data: subs } = await admin.from("push_subscriptions").select("id,endpoint,p256dh,auth");
+        console.log("push: dispositivos registrados =", subs?.length ?? 0);
         const payload = JSON.stringify({
           title: "Nueva selección",
           body: `${data.gallery_name} · ${data.access_name}`,

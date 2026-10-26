@@ -82,12 +82,20 @@ export async function renderAdminHome(app) {
     <div class="ggrid" id="gg">${gs.map(card).join('') || '<p class="muted">Aún no hay galerías. Crea la primera.</p>'}</div>
     <section class="cd pushbox"><div><b>Avisos en el móvil</b>
       <div class="muted sm">Recibe una notificación cuando un cliente envíe su selección. En iPhone, añade antes esta web a la pantalla de inicio.</div></div>
-      <button class="btn ghost" id="pushbtn">Activar avisos en este dispositivo</button></section>`;
+      <div class="tools"><button class="btn ghost" id="pushbtn">Activar avisos en este dispositivo</button><button class="btn ghost" id="testbtn">Enviar aviso de prueba</button></div></section>`;
   $('#q').oninput = (e) => {
     const q = e.target.value.trim().toLowerCase();
     $$('.gcard').forEach((c) => { c.hidden = q && !c.dataset.name.includes(q); });
   };
   $('#pushbtn').onclick = enablePush;
+  $('#testbtn').onclick = async () => {
+    const { data, error } = await sb.functions.invoke('test-push');
+    if (error) return toast('No se pudo probar: ' + (await fnError(error)));
+    if (data?.error) return toast(data.error);
+    toast(data.failed.length
+      ? `Enviado a ${data.sent} dispositivo(s); falló en ${data.failed.length}: ${data.failed[0]}`
+      : `Aviso enviado a ${data.sent} dispositivo(s). Debería llegar en unos segundos.`);
+  };
 }
 
 async function enablePush() {
@@ -252,10 +260,13 @@ export async function renderGalleryAdmin(app, id) {
       <form class="cd pad aform" id="af">${form}</form>
     </div>
     <section class="cd pad" style="margin-top:28px"><div class="rowhead"><h2 class="upper">Fotos</h2>
-      <div class="tools"><span class="muted sm">${ready ? 'Haz clic en una foto para eliminarla' : 'Subida desactivada: falta configurar R2'}</span>
+      <div class="tools"><span class="muted sm" id="phint">${!ready ? 'Subida desactivada: falta configurar R2' : n ? 'Haz clic en una foto para verla en grande' : ''}</span>
+      ${n ? `<button class="btn ghost sm" id="trash"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6M10 11v6M14 11v6"/></svg> Eliminar fotos</button>` : ''}
       <label class="btn ghost sm ${ready ? '' : 'off'}">+ Añadir fotos<input type="file" id="addf" accept="image/*" multiple hidden ${ready ? '' : 'disabled'}></label></div></div>
+      <div class="selbar" id="selbar" hidden><span id="selcount">0 seleccionadas</span>
+        <button class="btn ghost sm" id="selall">Seleccionar todas</button><button class="btn ghost sm" id="selcancel">Cancelar</button><button class="btn sm alert" id="seldel" disabled>Eliminar</button></div>
       ${progressHtml}
-      <div class="pgrid">${photos.map((p) => `<button class="pth" data-id="${p.id}" data-key="${esc(p.r2_key)}" title="${esc(p.filename || '')}">${ready ? `<img src="${esc(photoUrl(p.r2_key))}" alt="" loading="lazy">` : esc(p.filename || '')}</button>`).join('') || '<p class="muted">Aún no hay fotos.</p>'}</div>
+      <div class="pgrid">${photos.map((p) => `<button class="pth" data-id="${p.id}" data-key="${esc(p.r2_key)}" title="${esc(p.filename || '')}">${ready ? `<img src="${esc(photoUrl(p.r2_key))}" alt="" loading="lazy">` : esc(p.filename || '')}<span class="ck">✓</span></button>`).join('') || '<p class="muted">Aún no hay fotos.</p>'}</div>
     </section>`;
 
   const reload = () => renderGalleryAdmin(app, id);
@@ -353,15 +364,90 @@ export async function renderGalleryAdmin(app, id) {
       reload();
     };
   }
-  $('.pgrid').onclick = async (e) => {
+  // --- ver fotos en grande
+  function openViewer(start) {
+    if (!photos.length) return;
+    let k = start;
+    const back = document.createElement('div');
+    back.className = 'lbback';
+    const paint = () => {
+      const p = photos[k];
+      back.innerHTML = `<button class="lbc" data-c="1" aria-label="Cerrar">×</button>
+        <button class="lbn prev" data-n="-1" aria-label="Anterior">‹</button>
+        ${ready ? `<img src="${esc(photoUrl(p.r2_key))}" alt="">` : `<p style="color:#fff">${esc(p.filename || '')}</p>`}
+        <button class="lbn next" data-n="1" aria-label="Siguiente">›</button>
+        <div class="lbfoot"><span>${k + 1} / ${photos.length} · ${esc(p.filename || '')}</span></div>`;
+    };
+    const move = (d) => { k = (k + d + photos.length) % photos.length; paint(); };
+    const close = () => { document.removeEventListener('keydown', onKey); back.remove(); };
+    const onKey = (e) => {
+      if (e.key === 'Escape') close();
+      if (e.key === 'ArrowLeft') move(-1);
+      if (e.key === 'ArrowRight') move(1);
+    };
+    back.onclick = (e) => {
+      if (e.target === back || e.target.closest('[data-c]')) return close();
+      const nb = e.target.closest('[data-n]');
+      if (nb) move(parseInt(nb.dataset.n, 10));
+    };
+    document.addEventListener('keydown', onKey);
+    paint();
+    document.body.appendChild(back);
+  }
+
+  // --- papelera: elegir varias fotos y eliminarlas
+  let selMode = false;
+  const sel = new Set();
+  const paintSel = () => {
+    $$('.pth').forEach((b) => b.classList.toggle('sel', sel.has(b.dataset.id)));
+    if (n > 0) {
+      $('#selcount').textContent = `${sel.size} seleccionada${sel.size === 1 ? '' : 's'}`;
+      $('#seldel').disabled = sel.size === 0;
+    }
+  };
+  const setMode = (on) => {
+    selMode = on;
+    sel.clear();
+    $('#selbar').hidden = !on;
+    $('#trash').hidden = on;
+    $('#phint').textContent = on ? 'Toca las fotos que quieras eliminar' : 'Haz clic en una foto para verla en grande';
+    $('.pgrid').classList.toggle('selmode', on);
+    paintSel();
+  };
+  if (n > 0) {
+    $('#trash').onclick = () => setMode(true);
+    $('#selcancel').onclick = () => setMode(false);
+    $('#selall').onclick = () => {
+      if (sel.size === photos.length) sel.clear(); else photos.forEach((p) => sel.add(p.id));
+      paintSel();
+    };
+    $('#seldel').onclick = async () => {
+      const chosen = photos.filter((p) => sel.has(p.id));
+      if (!chosen.length) return;
+      if (!(await ask(`¿Eliminar ${chosen.length} foto${chosen.length === 1 ? '' : 's'}? También se quitarán de las selecciones de los clientes. No se puede deshacer.`, { ok: 'Eliminar' }))) return;
+      $('#seldel').disabled = true;
+      try {
+        await r2Delete(chosen.map((p) => p.r2_key));
+        for (let j = 0; j < chosen.length; j += 100) {
+          const { error } = await sb.from('photos').delete().in('id', chosen.slice(j, j + 100).map((p) => p.id));
+          if (error) throw error;
+        }
+        toast(`${chosen.length} foto${chosen.length === 1 ? '' : 's'} eliminada${chosen.length === 1 ? '' : 's'}`);
+        reload();
+      } catch (err) {
+        toast('No se pudo eliminar: ' + err.message);
+        $('#seldel').disabled = false;
+      }
+    };
+  }
+  $('.pgrid').onclick = (e) => {
     const b = e.target.closest('.pth');
     if (!b) return;
-    if (!(await ask('¿Eliminar esta foto? También se quitará de las selecciones.', { ok: 'Eliminar' }))) return;
-    try {
-      await r2Delete([b.dataset.key]);
-      const { error } = await sb.from('photos').delete().eq('id', b.dataset.id);
-      if (error) throw error;
-      reload();
-    } catch (err) { toast('No se pudo eliminar: ' + err.message); }
+    if (selMode) {
+      if (sel.has(b.dataset.id)) sel.delete(b.dataset.id); else sel.add(b.dataset.id);
+      paintSel();
+    } else {
+      openViewer(photos.findIndex((p) => p.id === b.dataset.id));
+    }
   };
 }
