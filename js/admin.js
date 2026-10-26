@@ -1,5 +1,5 @@
 import { CONFIG } from './config.js';
-import { sb, $, $$, esc, euros, r2Ready, photoUrl, toast, ask, openModal, refresh, goto } from './lib.js';
+import { sb, $, $$, esc, euros, r2Ready, photoUrl, toast, ask, askNumber, showText, numericOnly, openModal, refresh, goto } from './lib.js';
 import { watermark } from './watermark.js';
 
 const shell = (inner) => `
@@ -10,6 +10,7 @@ function bindShell() {
   $('#logout').onclick = async () => { await sb.auth.signOut(); goto('#/'); };
 }
 
+const extraTxt = (c) => (c == null ? 'Sin extras' : `Extra ${euros(c)}`);
 const genPin = () => String(crypto.getRandomValues(new Uint32Array(1))[0] % 10000).padStart(4, '0');
 const b64ToU8 = (b64) => {
   const pad = '='.repeat((4 - (b64.length % 4)) % 4);
@@ -72,7 +73,7 @@ export async function renderAdminHome(app) {
     return `<a class="gcard cd" href="#/galeria/${g.id}" data-name="${esc(g.name.toLowerCase())}">
       <div class="cover">${cover}</div>
       <div class="gbody"><div class="gname serif">${esc(g.name)}</div>
-      <div class="muted sm">${g.photo_count} fotos · ${g.access_count} accesos · Extra ${euros(g.extra_price_cents)}</div>
+      <div class="muted sm">${g.photo_count} fotos · ${g.access_count} accesos · ${extraTxt(g.extra_price_cents)}</div>
       <span class="tag ${g.submitted_count ? 'ok' : ''}">${esc(state)}</span></div></a>`;
   };
   $('.wrap').innerHTML = `
@@ -167,7 +168,8 @@ export function renderNewGallery(app) {
     <h1 class="serif" style="margin:20px 0 28px">Nueva galería</h1>
     <div class="cd form">
       <div class="two"><div><label class="lb" for="gn">Nombre</label><input class="in" id="gn" placeholder="Boda Juan y Pepa"></div>
-      <div class="w200"><label class="lb" for="gp">Precio foto extra (€)</label><input class="in" id="gp" inputmode="decimal" value="8"></div></div>
+      <div class="w200"><label class="lb" for="gp">Precio foto extra (€)</label><input class="in" id="gp" inputmode="decimal" autocomplete="off" placeholder="Sin extras" value="8"></div></div>
+      <p class="muted sm" style="margin:-14px 0 24px">Deja el precio vacío si esta galería no admite fotos extra.</p>
       <span class="lb">Fotos (hasta 500)</span>
       <label class="drop ${ready ? '' : 'off'}" id="drop"><input type="file" id="gf" accept="image/*" multiple hidden ${ready ? '' : 'disabled'}>
         <b>Arrastra aquí las fotos o elige archivos</b>
@@ -176,6 +178,7 @@ export function renderNewGallery(app) {
       <div class="actions end"><span class="muted sm">Los accesos de clientes se crean después, cuando la galería esté lista.</span><button class="btn" id="go">Crear galería</button></div>
     </div>`);
   bindShell();
+  numericOnly($('#gp'), { decimal: true });
   let files = [];
   const setFiles = (list) => {
     files = [...list].filter((f) => f.type.startsWith('image/'));
@@ -189,12 +192,13 @@ export function renderNewGallery(app) {
   $('#go').onclick = async () => {
     const name = $('#gn').value.trim();
     if (!name) return toast('Ponle un nombre a la galería');
-    const price = parseFloat($('#gp').value.replace(',', '.'));
-    if (!(price >= 0)) return toast('El precio no es válido');
+    const rawPrice = $('#gp').value.trim().replace(',', '.');
+    const price = rawPrice === '' ? null : parseFloat(rawPrice);
+    if (price !== null && !(price >= 0)) return toast('El precio no es válido');
     if (files.length > 500) return toast('Máximo 500 fotos por galería');
     const btn = $('#go');
     btn.disabled = true;
-    const { data: g, error } = await sb.from('galleries').insert({ name, extra_price_cents: Math.round(price * 100) }).select().single();
+    const { data: g, error } = await sb.from('galleries').insert({ name, extra_price_cents: price === null ? null : Math.round(price * 100) }).select().single();
     if (error) { toast(error.message); btn.disabled = false; return; }
     if (files.length) {
       try { await uploadWithUI(g.id, files); } catch (e) { toast('Error al subir: ' + e.message); }
@@ -231,17 +235,17 @@ export async function renderGalleryAdmin(app, id) {
       <label class="lb" style="margin-top:18px">Fotos a elegir</label>
       <div class="chips">${[7, 10, 15, 20, 30].filter((v) => v <= n).map((v) => `<button type="button" class="chip" data-v="${v}">${v}</button>`).join('')}</div>
       <label class="lb" for="al" style="margin-top:14px">Otro número (1–${n})</label>
-      <input class="in" id="al" type="number" min="1" max="${n}" value="${Math.min(15, n)}" required>
+      <input class="in" id="al" inputmode="numeric" autocomplete="off" value="${Math.min(15, n)}" required>
       <label class="lb" for="ap" style="margin-top:18px">PIN (vacío = sin PIN)</label>
       <div class="pinrow"><input class="in" id="ap" inputmode="numeric" maxlength="8" placeholder="Sin PIN" value="${genPin()}"><button type="button" class="btn ghost sm" id="newpin">Otro PIN</button></div>
-      <label class="chk"><input type="checkbox" id="ax"> Permitir fotos extra (${euros(gal.extra_price_cents)} cada una)</label>
-      <div id="axm" hidden><label class="lb" for="axn">Máximo de extras (vacío = sin tope)</label><input class="in" id="axn" type="number" min="0"></div>
+      ${gal.extra_price_cents == null ? '<p class="muted sm" style="margin-top:18px">Esta galería no admite fotos extra.</p>' : `<label class="chk"><input type="checkbox" id="ax"> Permitir fotos extra (${euros(gal.extra_price_cents)} cada una)</label>
+      <div id="axm" hidden><label class="lb" for="axn">Máximo de extras (vacío = sin tope)</label><input class="in" id="axn" inputmode="numeric" autocomplete="off"></div>`}
       <button class="btn full" style="margin-top:24px">Crear acceso</button>`;
 
   $('.wrap').innerHTML = `
     <a class="btn ghost" href="#/">← Galerías</a>
     <div class="rowhead" style="margin-top:20px"><h1 class="serif">${esc(gal.name)}</h1>
-      <div class="tools"><span class="muted">${n} fotos · Extra ${euros(gal.extra_price_cents)}</span>
+      <div class="tools"><span class="muted">${n} fotos · ${extraTxt(gal.extra_price_cents)}</span>
       <button class="btn ghost sm" id="eprice">Cambiar precio extra</button><button class="btn ghost sm danger" id="delg">Eliminar galería</button></div></div>
     <div class="cols">
       <section class="cd pad"><h2 class="upper">Accesos</h2><div id="alist">${accs.map(accRow).join('') || '<p class="muted">Todavía no hay accesos.</p>'}</div></section>
@@ -260,16 +264,19 @@ export async function renderGalleryAdmin(app, id) {
   if (n > 0) {
     $$('.chip').forEach((c) => { c.onclick = () => { $('#al').value = c.dataset.v; }; });
     $('#newpin').onclick = () => { $('#ap').value = genPin(); };
-    $('#ax').onchange = (e) => { $('#axm').hidden = !e.target.checked; };
+    numericOnly($('#al')); numericOnly($('#ap')); if ($('#axn')) numericOnly($('#axn'));
+    if ($('#ax')) $('#ax').onchange = (e) => { $('#axm').hidden = !e.target.checked; };
     $('#af').onsubmit = async (e) => {
       e.preventDefault();
+      const max = parseInt($('#al').value, 10);
+      if (!(max >= 1 && max <= n)) return toast(`El límite debe estar entre 1 y ${n}`);
       const { error } = await sb.rpc('admin_create_access', {
         p_gallery: id,
         p_name: $('#an').value.trim(),
-        p_max: parseInt($('#al').value, 10),
+        p_max: max,
         p_pin: $('#ap').value.trim() || null,
-        p_allow_extras: $('#ax').checked,
-        p_max_extras: $('#axn').value === '' ? null : parseInt($('#axn').value, 10),
+        p_allow_extras: $('#ax')?.checked ?? false,
+        p_max_extras: !$('#axn') || $('#axn').value === '' ? null : parseInt($('#axn').value, 10),
       });
       if (error) return toast(error.message);
       toast('Acceso creado');
@@ -284,7 +291,7 @@ export async function renderGalleryAdmin(app, id) {
     const a = accs.find((x) => x.id === b.closest('.arow').dataset.id);
     if (b.dataset.act === 'copy') {
       const url = `${location.origin}${location.pathname}#/g/${a.token}`;
-      navigator.clipboard.writeText(url).then(() => toast('Enlace copiado'), () => prompt('Copia el enlace:', url));
+      navigator.clipboard.writeText(url).then(() => toast('Enlace copiado'), () => showText('Copia el enlace', url));
     } else if (b.dataset.act === 'view') {
       viewSelection(a);
     } else if (b.dataset.act === 'reopen') {
@@ -319,12 +326,14 @@ export async function renderGalleryAdmin(app, id) {
 
   // --- galería: precio, borrar, añadir fotos, borrar foto
   $('#eprice').onclick = async () => {
-    const v = prompt('Precio por foto extra (€):', String(gal.extra_price_cents / 100));
+    const v = await askNumber('Precio por foto extra (€). Déjalo vacío para no permitir extras.', gal.extra_price_cents == null ? '' : String(gal.extra_price_cents / 100));
     if (v === null) return;
-    const price = parseFloat(v.replace(',', '.'));
-    if (!(price >= 0)) return toast('Precio no válido');
-    const { error } = await sb.from('galleries').update({ extra_price_cents: Math.round(price * 100) }).eq('id', id);
+    const raw = v.replace(',', '.');
+    const price = raw === '' ? null : parseFloat(raw);
+    if (price !== null && !(price >= 0)) return toast('Escribe un precio válido');
+    const { error } = await sb.from('galleries').update({ extra_price_cents: price === null ? null : Math.round(price * 100) }).eq('id', id);
     if (error) return toast(error.message);
+    if (price === null) await sb.from('accesses').update({ allow_extras: false, max_extras: null }).eq('gallery_id', id);
     reload();
   };
   $('#delg').onclick = async () => {

@@ -1,37 +1,47 @@
 # RLC233 · Galerías para clientes
 
-Web estática (sin compilar) para GitHub Pages + Supabase + Cloudflare R2.
+Web privada de **RLC233**, fotógrafa, para compartir las fotos de cada sesión con sus clientes y que ellos elijan las que quieren recibir.
 
-## 1. Subir la web a GitHub
-1. En GitHub, repositorio **público** llamado exactamente `rlc233.github.io`.
-2. Sube **todo el contenido de esta carpeta** a la raíz del repositorio (`index.html`, `js/`, `css/`, `icons/`, `sw.js`, `manifest.webmanifest`, `robots.txt`...).
-3. Settings → Pages → Source: *Deploy from a branch* → rama `main`, carpeta `/ (root)`.
-4. En unos minutos estará en https://rlc233.github.io (el panel de administradora). Los clientes entran por los enlaces `https://rlc233.github.io/#/g/CÓDIGO`.
+> Este repositorio contiene solo el código de la web. Las galerías, las fotos y los datos de los clientes no forman parte de él.
 
-## 2. Edge Functions en Supabase
-Supabase → Edge Functions → *Deploy a new function* (editor). Crea tres funciones con **estos nombres exactos** y pega el código de `supabase/functions/<nombre>/index.ts`:
-- `r2-upload`
-- `r2-delete`
-- `submit-selection`
+## Qué hace
 
-## 3. Secretos (Edge Functions → Secrets)
-| Secreto | Valor |
+- **Una galería por sesión**, con hasta 500 fotos.
+- **Accesos por enlace privado.** Cada galería puede tener varios accesos (por ejemplo, los novios o sus familias), cada uno con su propio enlace, su propio límite de fotos y, si se quiere, un PIN.
+- **Selección guiada.** El cliente recorre las fotos por páginas, las amplía, elige las que quiere y puede quitarlas desde el apartado "Mis fotos". El límite lo impone la base de datos, no solo la pantalla.
+- **Fotos extra opcionales**, a un precio fijo por foto definido en cada galería. Las galerías sin precio no admiten extras.
+- **Envío de la selección.** Al enviarla queda cerrada y RLC233 recibe un aviso en el móvil.
+- **Panel de administración** privado para crear galerías, subir fotos, generar accesos y consultar las selecciones.
+
+## Cómo está hecho
+
+| Parte | Tecnología |
 |---|---|
-| `R2_ACCOUNT_ID` | Account ID de Cloudflare |
-| `R2_BUCKET` | nombre del bucket |
-| `R2_ACCESS_KEY_ID` | clave de acceso del token de R2 |
-| `R2_SECRET_ACCESS_KEY` | clave secreta del token de R2 |
-| `VAPID_PUBLIC_KEY` | clave pública VAPID |
-| `VAPID_PRIVATE_KEY` | clave privada VAPID |
-| `VAPID_SUBJECT` | `mailto:tu-email@ejemplo.com` |
+| Web | HTML, CSS y JavaScript sin frameworks ni paso de compilación, publicada con GitHub Pages |
+| Base de datos y usuarios | Supabase (PostgreSQL con reglas de seguridad por fila, autenticación y Edge Functions) |
+| Almacenamiento de fotos | Cloudflare R2 |
+| Avisos al móvil | Web Push |
 
-(`SUPABASE_URL`, `SUPABASE_ANON_KEY` y `SUPABASE_SERVICE_ROLE_KEY` ya los pone Supabase solo.)
+## Privacidad y seguridad
 
-## 4. Claves VAPID (avisos al móvil)
-En un terminal con Node instalado: `npx web-push generate-vapid-keys`. La **pública** va en `js/config.js` (`VAPID_PUBLIC_KEY`) y en los secretos; la **privada** solo en los secretos.
+- Las galerías no son públicas ni aparecen en buscadores. Solo se entra con un enlace privado que no se puede adivinar, y opcionalmente con un PIN.
+- Las fotos que se muestran son versiones reducidas con una marca de agua incrustada en la propia imagen. Los originales no se suben a la web.
+- Los clientes no tienen acceso directo a la base de datos. Solo pueden hacer las operaciones permitidas sobre su propio acceso, y todas se validan en el servidor.
+- Las claves privadas no están en este repositorio. Se guardan como secretos en el servicio de backend. La clave pública de Supabase que aparece en la configuración está diseñada para ser pública.
 
-## 5. Pendiente: Cloudflare R2
-- En `js/config.js`, cambia `R2_PUBLIC_URL` por la URL pública del bucket (la de `r2.dev`).
-- Añade los cuatro secretos `R2_*`.
-- CORS del bucket: permitir `PUT` desde `https://rlc233.github.io` (y `http://localhost:5173` si pruebas en local).
-Hasta entonces, la web funciona pero la subida de fotos está desactivada.
+## Estructura
+
+```
+index.html            Página única de la web
+css/                  Estilos
+js/                   Panel de administración, vista del cliente y utilidades
+icons/                Iconos de la aplicación
+sw.js                 Recepción de avisos
+supabase/functions/   Funciones del servidor (subida y borrado de fotos, envío de selección)
+```
+
+## Estado y licencia
+
+Proyecto personal en uso, que no acepta contribuciones.
+
+© RLC233. Todos los derechos reservados.
