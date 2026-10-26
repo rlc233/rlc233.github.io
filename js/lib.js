@@ -50,3 +50,46 @@ export function ask(message, { ok = 'Aceptar', cancel = 'Cancelar' } = {}) {
     });
   });
 }
+
+// Solo números en un campo. decimal=true admite coma o punto con hasta 2 decimales.
+export function numericOnly(input, { decimal = false } = {}) {
+  input.addEventListener('input', () => {
+    let v = input.value;
+    if (decimal) {
+      v = v.replace(/[^0-9.,]/g, '');
+      const m = v.search(/[.,]/);
+      if (m !== -1) v = v.slice(0, m + 1) + v.slice(m + 1).replace(/[.,]/g, '').slice(0, 2);
+    } else {
+      v = v.replace(/\D/g, '');
+    }
+    if (v !== input.value) input.value = v;
+  });
+}
+
+// Ventana propia para pedir un número. Devuelve el texto escrito, o null si se cancela.
+export function askNumber(title, value = '', { ok = 'Guardar', decimal = true } = {}) {
+  return new Promise((resolve) => {
+    let done = false;
+    const finish = (v) => { if (!done) { done = true; resolve(v); } };
+    const m = openModal(
+      `<form id="nf"><p style="margin:0 0 12px;font-size:16px">${esc(title)}</p>
+       <input class="in" id="nv" inputmode="${decimal ? 'decimal' : 'numeric'}" autocomplete="off" value="${esc(value)}" aria-label="${esc(title)}">
+       <div class="mactions"><button type="button" class="btn ghost" data-r="0">Cancelar</button><button class="btn">${esc(ok)}</button></div></form>`,
+      'small', () => finish(null));
+    const input = $('#nv', m.el);
+    numericOnly(input, { decimal });
+    input.focus(); input.select();
+    $('#nf', m.el).onsubmit = (e) => { e.preventDefault(); finish(input.value.trim()); m.close(); };
+    m.el.addEventListener('click', (e) => { if (e.target.closest('[data-r="0"]')) m.close(); });
+  });
+}
+
+// Ventana propia para mostrar un texto seleccionable (por ejemplo, un enlace).
+export function showText(title, text) {
+  const m = openModal(
+    `<p style="margin:0 0 12px;font-size:16px">${esc(title)}</p><input class="in" id="st" readonly value="${esc(text)}">
+     <div class="mactions"><button class="btn">Cerrar</button></div>`, 'small');
+  const i = $('#st', m.el);
+  i.focus(); i.select();
+  $('.btn', m.el).onclick = () => m.close();
+}
