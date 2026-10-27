@@ -3,15 +3,55 @@ import { sb, $, esc, euros, photoUrl, r2Ready, toast, ask } from './lib.js';
 
 const PAGE = 24;
 
-export async function renderClient(app, token) {
+// preview = true: vista previa de la administradora (solo lectura, no guarda nada)
+export async function renderClient(app, token, preview = false) {
   const pinKey = 'pin:' + token;
-  let pin = sessionStorage.getItem(pinKey) || null;
-  let info, page = 1, total = 0, photos = [], closed = false, busy = false, lbIdx = -1;
-  const selected = new Map(); // photo_id -> r2_key
+  let pin = preview ? null : (sessionStorage.getItem(pinKey) || null);
+  let info, page = 1, total = 0, photos = [], closed = false, busy = false;
+  let lbIdx = -1, lbList = null;            // lbList: null = fotos de la página; si no, lista de elegidas
+  let accessId = null, galleryId = null;
+  const selected = new Map();               // photo_id -> r2_key
 
   // Protección básica: sin menú contextual ni arrastrar
   app.oncontextmenu = (e) => e.preventDefault();
   app.ondragstart = (e) => e.preventDefault();
+
+  // ---- acceso a datos (real para el cliente, lectura directa para la vista previa)
+  const api = {
+    async open() {
+      if (!preview) {
+        const { data, error } = await sb.rpc('client_open', { p_token: token, p_pin: pin });
+        return error ? { error: 'conn' } : data;
+      }
+      const { data: a, error } = await sb.from('accesses').select('*, galleries(name, extra_price_cents)').eq('token', token).maybeSingle();
+      if (error || !a) return { error: 'preview' };
+      const { count } = await sb.from('photos').select('id', { count: 'exact', head: true }).eq('gallery_id', a.gallery_id);
+      accessId = a.id; galleryId = a.gallery_id;
+      const price = a.galleries.extra_price_cents;
+      return {
+        access: { name: a.name, max_selections: a.max_selections, allow_extras: a.allow_extras && price != null, max_extras: a.max_extras, submitted: !!a.submitted_at },
+        gallery: { name: a.galleries.name, extra_price_cents: price, photo_count: count ?? 0 },
+      };
+    },
+    async selected() {
+      if (!preview) {
+        const r = await sb.rpc('client_selected', { p_token: token, p_pin: pin });
+        return r.data?.photos || [];
+      }
+      const { data } = await sb.from('selections').select('photo_id, photos(r2_key, position)').eq('access_id', accessId);
+      return (data || []).filter((r) => r.photos).sort((x, y) => x.photos.position - y.photos.position)
+        .map((r) => ({ id: r.photo_id, r2_key: r.photos.r2_key }));
+    },
+    async photos(p) {
+      if (!preview) {
+        const { data, error } = await sb.rpc('client_photos', { p_token: token, p_pin: pin, p_page: p, p_size: PAGE });
+        return error || data.error ? null : data;
+      }
+      const { data, count, error } = await sb.from('photos').select('id, r2_key, position', { count: 'exact' })
+        .eq('gallery_id', galleryId).order('position').order('id').range((p - 1) * PAGE, p * PAGE - 1);
+      return error ? null : { total: count ?? 0, photos: data };
+    },
+  };
 
   const box = (html) => { app.innerHTML = `<div class="cmsg"><div class="brand big">${esc(CONFIG.BRAND)}</div>${html}</div>`; };
 
@@ -26,17 +66,17 @@ export async function renderClient(app, token) {
 
   async function open() {
     app.innerHTML = '<div class="cmsg"><p class="muted">Cargando…</p></div>';
-    const { data, error } = await sb.rpc('client_open', { p_token: token, p_pin: pin });
-    if (error) return box('<p>No se ha podido cargar la galería. Inténtalo de nuevo en unos minutos.</p>');
+    const data = await api.open();
+    if (data.error === 'conn') return box('<p>No se ha podido cargar la galería. Inténtalo de nuevo en unos minutos.</p>');
+    if (data.error === 'preview') return box('<p>La vista previa solo está disponible con tu sesión de administradora abierta.</p>');
     if (data.error === 'not_found') return box('<p>Este enlace no es válido.</p>');
     if (data.error === 'locked') return box('<p>Demasiados intentos. Vuelve a probar dentro de 15 minutos.</p>');
     if (data.error === 'pin') return askPin(!!pin);
     if (pin) sessionStorage.setItem(pinKey, pin);
     info = data;
     closed = data.access.submitted;
-    const sel = await sb.rpc('client_selected', { p_token: token, p_pin: pin });
     selected.clear();
-    (sel.data?.photos || []).forEach((p) => selected.set(p.id, p.r2_key));
+    (await api.selected()).forEach((p) => selected.set(p.id, p.r2_key));
     buildLayout();
     await loadPage(1);
   }
@@ -59,7 +99,7 @@ export async function renderClient(app, token) {
       const t = e.target.closest('[data-tog]');
       if (t) return toggle(t.dataset.tog);
       const o = e.target.closest('[data-open]');
-      if (o) showLb(parseInt(o.dataset.open, 10));
+      if (o) showLb(parseInt(o.dataset.open, 10), null);
     };
     $('#pager').onclick = (e) => {
       const b = e.target.closest('[data-p]');
@@ -68,6 +108,8 @@ export async function renderClient(app, token) {
     $('#side').onclick = (e) => {
       const r = e.target.closest('[data-rm]');
       if (r) return toggle(r.dataset.rm);
+      const v = e.target.closest('[data-view]');
+      if (v) return showLb(parseInt(v.dataset.view, 10), [...selected].map(([id, r2_key]) => ({ id, r2_key })));
       if (e.target.closest('#send')) submit();
     };
     $('#mbar').onclick = () => $('#side').scrollIntoView({ behavior: 'smooth' });
@@ -82,8 +124,8 @@ export async function renderClient(app, token) {
   }
 
   async function loadPage(p) {
-    const { data, error } = await sb.rpc('client_photos', { p_token: token, p_pin: pin, p_page: p, p_size: PAGE });
-    if (error || data.error) return toast('No se han podido cargar las fotos');
+    const data = await api.photos(p);
+    if (!data) return toast('No se han podido cargar las fotos');
     page = p; total = data.total; photos = data.photos;
     paintGrid(); paintPager();
   }
@@ -124,19 +166,23 @@ export async function renderClient(app, token) {
   function paintSide() {
     const a = info.access, g = info.gallery, count = selected.size, max = a.max_selections;
     const extras = Math.max(0, count - max), price = g.extra_price_cents;
-    $('#banner').innerHTML = closed ? '<div class="banner">Tu selección ya se ha enviado. ¡Gracias! Si necesitas cambiar algo, escríbeme.</div>' : '';
+    const readOnly = closed || preview;
+    $('#banner').innerHTML = preview
+      ? `<div class="banner">Vista previa de «${esc(a.name)}»: así lo ve el cliente y aquí no se guarda nada. <a href="#/galeria/${galleryId}">Volver al panel</a></div>`
+      : closed ? '<div class="banner">Tu selección ya se ha enviado. ¡Gracias! Si necesitas cambiar algo, escríbeme.</div>' : '';
     $('#pill').textContent = `${count} de ${max} elegidas${extras ? ` · ${extras} extra` : ''}`;
     $('#mbar').innerHTML = closed ? '' : `<span>${count} de ${max} elegidas${extras ? ` · ${extras} extra` : ''}</span><span class="btn sm">Ver mis fotos</span>`;
     $('#mbar').hidden = closed;
     $('#side').innerHTML = `<h2 class="serif">Mis fotos</h2>
-      <p class="muted sm">${closed ? 'Selección enviada' : 'Puedes quitar cualquiera con la ×'}</p>
-      <div class="sgrid">${[...selected].map(([id, key]) => `<div class="sth"><img src="${esc(photoUrl(key))}" alt="" draggable="false">${closed ? '' : `<button class="x" data-rm="${id}" aria-label="Quitar foto">×</button>`}</div>`).join('') || '<p class="muted sm" style="grid-column:1/-1">Todavía no has elegido ninguna.</p>'}</div>
+      <p class="muted sm">${closed ? 'Selección enviada' : preview ? 'Toca una foto para verla en grande' : 'Toca una foto para verla en grande · quita con la ×'}</p>
+      <div class="sgrid">${[...selected].map(([id, key], i) => `<div class="sth"><button class="sthb" data-view="${i}" aria-label="Ver foto en grande"><img src="${esc(photoUrl(key))}" alt="" draggable="false"></button>${readOnly ? '' : `<button class="x" data-rm="${id}" aria-label="Quitar foto">×</button>`}</div>`).join('') || '<p class="muted sm" style="grid-column:1/-1">Todavía no has elegido ninguna.</p>'}</div>
       <div class="sum"><div><span>Incluidas</span><b>${Math.min(count, max)} / ${max}</b></div>
       ${a.allow_extras ? `<div><span>Extras (${euros(price)} c/u)</span><b>${extras} × ${euros(price)} = ${euros(extras * price)}</b></div>` : ''}</div>
-      ${closed ? '' : `<button class="btn full" id="send" ${count ? '' : 'disabled'}>Enviar mi selección</button><p class="muted sm c">Al enviar, la selección queda cerrada</p>`}`;
+      ${readOnly ? '' : `<button class="btn full" id="send" ${count ? '' : 'disabled'}>Enviar mi selección</button><p class="muted sm c">Al enviar, la selección queda cerrada</p>`}`;
   }
 
   async function toggle(id) {
+    if (preview) return toast('Vista previa: aquí no se puede cambiar la selección.');
     if (closed) return toast('La selección ya se ha enviado.');
     if (busy) return;
     const a = info.access, g = info.gallery, count = selected.size, max = a.max_selections;
@@ -153,7 +199,7 @@ export async function renderClient(app, token) {
     if (data.error === 'closed') { closed = true; paintAll(); return toast('La selección ya se había enviado.'); }
     if (data.error) return toast('No se pudo cambiar la foto.');
     if (data.selected) {
-      const key = photos.find((p) => p.id === id)?.r2_key;
+      const key = photos.find((p) => p.id === id)?.r2_key ?? lbList?.find((p) => p.id === id)?.r2_key;
       if (key) selected.set(id, key);
     } else {
       selected.delete(id);
@@ -164,6 +210,7 @@ export async function renderClient(app, token) {
   }
 
   async function submit() {
+    if (preview) return toast('Vista previa: no se envía nada.');
     const a = info.access, g = info.gallery, count = selected.size, max = a.max_selections;
     if (!count) return toast('Elige al menos una foto.');
     const extras = Math.max(0, count - max);
@@ -185,18 +232,26 @@ export async function renderClient(app, token) {
     }
   }
 
-  // ---- visor grande
-  function showLb(i) {
+  // ---- visor grande (fotos de la página, o las elegidas desde "Mis fotos")
+  const lbItems = () => lbList || photos;
+  function showLb(i, list) {
+    if (list !== undefined) lbList = list;
     lbIdx = i;
-    const p = photos[i], on = selected.has(p.id);
+    const items = lbItems(), p = items[i];
+    if (!p) return closeLb();
+    const on = selected.has(p.id);
+    const label = lbList ? `${i + 1} / ${items.length}` : `${(page - 1) * PAGE + i + 1} / ${total}`;
+    const canPick = !closed && !preview;
     $('#lbx').innerHTML = `<div class="lbback noprot"><button class="lbc" data-c="1" aria-label="Cerrar">×</button>
       <button class="lbn prev" data-n="-1" aria-label="Anterior">‹</button>
       <img src="${esc(photoUrl(p.r2_key))}" alt="" draggable="false">
       <button class="lbn next" data-n="1" aria-label="Siguiente">›</button>
-      <div class="lbfoot"><span>${(page - 1) * PAGE + i + 1} / ${total}</span>${closed ? '' : `<button class="btn ${on ? '' : 'light'}" data-s="1">${on ? '✓ Elegida · quitar' : 'Elegir esta foto'}</button>`}</div></div>`;
+      <div class="lbfoot"><span>${label}</span>${canPick ? `<button class="btn ${on ? '' : 'light'}" data-s="1">${on ? '✓ Elegida · quitar' : 'Elegir esta foto'}</button>` : ''}</div></div>`;
   }
-  function closeLb() { lbIdx = -1; $('#lbx').innerHTML = ''; }
+  function closeLb() { lbIdx = -1; lbList = null; $('#lbx').innerHTML = ''; }
   async function lbMove(d) {
+    const items = lbItems();
+    if (lbList) return showLb((lbIdx + d + items.length) % items.length);
     const j = lbIdx + d;
     if (j >= 0 && j < photos.length) return showLb(j);
     const np = page + d;
@@ -208,7 +263,7 @@ export async function renderClient(app, token) {
     if (e.target.closest('[data-c]') || e.target.classList.contains('lbback')) return closeLb();
     const n = e.target.closest('[data-n]');
     if (n) return lbMove(parseInt(n.dataset.n, 10));
-    if (e.target.closest('[data-s]')) toggle(photos[lbIdx].id);
+    if (e.target.closest('[data-s]')) toggle(lbItems()[lbIdx].id);
   }
 
   await open();

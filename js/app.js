@@ -10,7 +10,7 @@ async function route() {
   const parts = (location.hash.replace(/^#/, '') || '/').split('/').filter(Boolean);
   window.scrollTo(0, 0);
   try {
-    if (parts[0] === 'g' && parts[1]) return await renderClient(app, parts[1]);
+    if (parts[0] === 'g' && parts[1]) return await renderClient(app, parts[1], parts[2] === 'preview');
     const { data: { session } } = await sb.auth.getSession();
     if (!session) return renderLogin(app);
     const { data: ok } = await sb.rpc('is_admin');

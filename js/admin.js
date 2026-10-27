@@ -80,14 +80,20 @@ export async function renderAdminHome(app) {
     <div class="rowhead"><h1 class="serif">Galerías</h1>
       <div class="tools"><input class="in" id="q" placeholder="Buscar galería…" aria-label="Buscar"><a class="btn" href="#/nueva">+ Nueva galería</a></div></div>
     <div class="ggrid" id="gg">${gs.map(card).join('') || '<p class="muted">Aún no hay galerías. Crea la primera.</p>'}</div>
-    <section class="cd pushbox"><div><b>Avisos en el móvil</b>
+    <section class="cd pushbox"><div><b>Avisos de nuevas selecciones</b> <span class="tag" id="pushtag">…</span>
       <div class="muted sm">Recibe una notificación cuando un cliente envíe su selección. En iPhone, añade antes esta web a la pantalla de inicio.</div></div>
       <div class="tools"><button class="btn ghost" id="pushbtn">Activar avisos en este dispositivo</button><button class="btn ghost" id="testbtn">Enviar aviso de prueba</button></div></section>`;
   $('#q').oninput = (e) => {
     const q = e.target.value.trim().toLowerCase();
     $$('.gcard').forEach((c) => { c.hidden = q && !c.dataset.name.includes(q); });
   };
-  $('#pushbtn').onclick = enablePush;
+  refreshPush();
+  $('#pushbtn').onclick = async () => {
+    const b = $('#pushbtn');
+    b.disabled = true;
+    try { if (b.dataset.on) await disablePush(); else await enablePush(); }
+    finally { b.disabled = false; await refreshPush(); }
+  };
   $('#testbtn').onclick = async () => {
     const { data, error } = await sb.functions.invoke('test-push');
     if (error) return toast('No se pudo probar: ' + (await fnError(error)));
@@ -96,6 +102,43 @@ export async function renderAdminHome(app) {
       ? `Enviado a ${data.sent} dispositivo(s); falló en ${data.failed.length}: ${data.failed[0]}`
       : `Aviso enviado a ${data.sent} dispositivo(s). Debería llegar en unos segundos.`);
   };
+}
+
+async function pushIsOn() {
+  try {
+    if (!('serviceWorker' in navigator) || !('PushManager' in window) || !('Notification' in window)) return false;
+    if (Notification.permission !== 'granted') return false;
+    const reg = await navigator.serviceWorker.getRegistration();
+    const sub = reg ? await reg.pushManager.getSubscription() : null;
+    if (!sub) return false;
+    const { data } = await sb.from('push_subscriptions').select('id').eq('endpoint', sub.endpoint).maybeSingle();
+    return !!data;
+  } catch (_) { return false; }
+}
+
+async function refreshPush() {
+  const tag = $('#pushtag'), btn = $('#pushbtn');
+  if (!tag || !btn) return;
+  const on = await pushIsOn();
+  tag.textContent = on ? 'Activados en este dispositivo' : 'Desactivados en este dispositivo';
+  tag.classList.toggle('ok', on);
+  btn.textContent = on ? 'Desactivar avisos' : 'Activar avisos en este dispositivo';
+  btn.dataset.on = on ? '1' : '';
+}
+
+async function disablePush() {
+  try {
+    const reg = await navigator.serviceWorker.getRegistration();
+    const sub = reg ? await reg.pushManager.getSubscription() : null;
+    if (sub) {
+      const ep = sub.endpoint;
+      await sub.unsubscribe();
+      await sb.from('push_subscriptions').delete().eq('endpoint', ep);
+    }
+    toast('Avisos desactivados en este dispositivo');
+  } catch (e) {
+    toast('No se pudieron desactivar: ' + e.message);
+  }
 }
 
 async function enablePush() {
@@ -234,7 +277,7 @@ export async function renderGalleryAdmin(app, id) {
   const accRow = (a) => `<div class="arow" data-id="${a.id}">
     <div class="a1"><b>${esc(a.name)}</b><div class="muted sm">PIN ${a.pin ? esc(a.pin) : 'sin PIN'} · límite ${a.max_selections}${a.allow_extras ? ' + extras' : ''}</div></div>
     <div class="a2"><span class="tag ${a.submitted_at ? 'ok' : ''}">${a.submitted_at ? 'Enviada · ' : ''}${a.selected_count} elegidas${a.extra_count ? ` (${a.extra_count} extra · ${euros(a.extra_total_cents)})` : ''}</span></div>
-    <div class="a3"><button class="btn ghost sm" data-act="copy">Copiar enlace</button><button class="btn ghost sm" data-act="view">Ver selección</button>${a.submitted_at ? '<button class="btn ghost sm" data-act="reopen">Reabrir</button>' : ''}<button class="btn ghost sm danger" data-act="del">Eliminar</button></div></div>`;
+    <div class="a3"><button class="btn ghost sm" data-act="preview">Previsualizar</button><button class="btn ghost sm" data-act="copy">Copiar enlace</button><button class="btn ghost sm" data-act="view">Ver selección</button>${a.submitted_at ? '<button class="btn ghost sm" data-act="reopen">Reabrir</button>' : ''}<button class="btn ghost sm danger" data-act="del">Eliminar</button></div></div>`;
 
   const form = n === 0
     ? '<h2 class="serif">Nuevo acceso</h2><p class="muted">Sube primero las fotos de la galería. Después podrás crear los accesos.</p>'
@@ -300,7 +343,9 @@ export async function renderGalleryAdmin(app, id) {
     const b = e.target.closest('button[data-act]');
     if (!b) return;
     const a = accs.find((x) => x.id === b.closest('.arow').dataset.id);
-    if (b.dataset.act === 'copy') {
+    if (b.dataset.act === 'preview') {
+      window.open(`${location.origin}${location.pathname}#/g/${a.token}/preview`, '_blank');
+    } else if (b.dataset.act === 'copy') {
       const url = `${location.origin}${location.pathname}#/g/${a.token}`;
       navigator.clipboard.writeText(url).then(() => toast('Enlace copiado'), () => showText('Copia el enlace', url));
     } else if (b.dataset.act === 'view') {
