@@ -1,5 +1,5 @@
 import { CONFIG } from './config.js';
-import { sb, $, esc, euros, photoUrl, r2Ready, toast, ask } from './lib.js';
+import { sb, $, esc, euros, photoUrl, r2Ready, toast, ask, errorPage } from './lib.js';
 
 const PAGE = 24;
 
@@ -68,8 +68,8 @@ export async function renderClient(app, token, preview = false) {
     app.innerHTML = '<div class="cmsg"><p class="muted">Cargando…</p></div>';
     const data = await api.open();
     if (data.error === 'conn') return box('<p>No se ha podido cargar la galería. Inténtalo de nuevo en unos minutos.</p>');
-    if (data.error === 'preview') return box('<p>La vista previa solo está disponible con tu sesión de administradora abierta.</p>');
-    if (data.error === 'not_found') return box('<p>Este enlace no es válido.</p>');
+    if (data.error === 'preview') return errorPage(app, '401', 'Acceso no autorizado', 'La vista previa solo está disponible con la sesión de administradora abierta. Inicia sesión e inténtalo de nuevo.');
+    if (data.error === 'not_found') return errorPage(app, '404', 'Enlace no disponible', 'Este enlace ya no está disponible. Puede que la galería se haya eliminado o que el enlace esté incompleto. Si crees que es un error, ponte en contacto con quien te lo envió.', { home: false });
     if (data.error === 'locked') return box('<p>Demasiados intentos. Vuelve a probar dentro de 15 minutos.</p>');
     if (data.error === 'pin') return askPin(!!pin);
     if (pin) sessionStorage.setItem(pinKey, pin);

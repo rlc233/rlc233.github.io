@@ -1,14 +1,32 @@
 import { CONFIG } from './config.js';
-import { sb, $, $$, esc, euros, r2Ready, photoUrl, toast, ask, askNumber, showText, numericOnly, openModal, refresh, goto } from './lib.js';
+import { sb, $, $$, esc, euros, r2Ready, photoUrl, toast, ask, askNumber, showText, numericOnly, openModal, refresh, goto, errorPage } from './lib.js';
 import { watermark } from './watermark.js';
 
-const shell = (inner) => `
-<header class="top"><a class="brand" href="#/">RLC233</a><span class="sub">Panel de administración</span><button class="btn ghost" id="logout">Cerrar sesión</button></header>
+export const shell = (inner) => `
+<header class="top"><a class="brand" href="#/">RLC233</a><span class="sub">Panel de administración</span><a class="btn ghost help" href="#/ayuda" title="Ayuda" aria-label="Ayuda">?</a><button class="btn ghost" id="logout">Cerrar sesión</button></header>
 <main class="wrap">${inner}</main>`;
 
-function bindShell() {
+export function bindShell() {
   $('#logout').onclick = async () => { await sb.auth.signOut(); goto('#/'); };
 }
+
+// Mensaje que se copia para mandar al cliente. Edítalo aquí si quieres cambiar el texto.
+const clientMessage = (gal, a, url) => {
+  const extras = a.allow_extras && gal.extra_price_cents != null
+    ? ` y, si desea más, cada foto extra cuesta ${euros(gal.extra_price_cents)}` : '';
+  return [
+    `Hola, ya está lista su galería de fotos «${gal.name}».`,
+    '',
+    'Abra el siguiente enlace para encontrar su galería de fotos:',
+    url,
+    '',
+    a.pin ? `Ingrese el siguiente PIN dentro de la página para acceder: ${a.pin}\n` : null,
+    `Podrá elegir hasta ${a.max_selections} foto${a.max_selections === 1 ? '' : 's'}${extras}. Cuando termine, pulse «Enviar mi selección».`,
+    '',
+    'Un saludo,',
+    CONFIG.BRAND,
+  ].filter((l) => l !== null).join('\n');
+};
 
 const extraTxt = (c) => (c == null ? 'Sin extras' : `Extra ${euros(c)}`);
 const genPin = () => String(crypto.getRandomValues(new Uint32Array(1))[0] % 10000).padStart(4, '0');
@@ -267,17 +285,14 @@ export async function renderGalleryAdmin(app, id) {
     sb.from('photos').select('id,r2_key,filename,position').eq('gallery_id', id).order('position').limit(1000),
     sb.from('access_overview').select('*').eq('gallery_id', id).order('created_at'),
   ]);
-  if (g.error) {
-    $('.wrap').innerHTML = '<p class="err">No se encontró la galería.</p><a class="btn ghost" href="#/">← Galerías</a>';
-    return;
-  }
+  if (g.error) return errorPage(app, '404', 'Galería no encontrada', 'Puede que se haya eliminado.');
   const gal = g.data, photos = ph.data || [], accs = ac.data || [], n = photos.length;
   const ready = r2Ready();
 
   const accRow = (a) => `<div class="arow" data-id="${a.id}">
     <div class="a1"><b>${esc(a.name)}</b><div class="muted sm">PIN ${a.pin ? esc(a.pin) : 'sin PIN'} · límite ${a.max_selections}${a.allow_extras ? ' + extras' : ''}</div></div>
     <div class="a2"><span class="tag ${a.submitted_at ? 'ok' : ''}">${a.submitted_at ? 'Enviada · ' : ''}${a.selected_count} elegidas${a.extra_count ? ` (${a.extra_count} extra · ${euros(a.extra_total_cents)})` : ''}</span></div>
-    <div class="a3"><button class="btn ghost sm" data-act="preview">Previsualizar</button><button class="btn ghost sm" data-act="copy">Copiar enlace</button><button class="btn ghost sm" data-act="view">Ver selección</button>${a.submitted_at ? '<button class="btn ghost sm" data-act="reopen">Reabrir</button>' : ''}<button class="btn ghost sm danger" data-act="del">Eliminar</button></div></div>`;
+    <div class="a3"><button class="btn ghost sm" data-act="preview">Previsualizar</button><button class="btn ghost sm" data-act="copy">Copiar mensaje</button><button class="btn ghost sm" data-act="view">Ver selección</button>${a.submitted_at ? '<button class="btn ghost sm" data-act="reopen">Reabrir</button>' : ''}<button class="btn ghost sm danger" data-act="del">Eliminar</button></div></div>`;
 
   const form = n === 0
     ? '<h2 class="serif">Nuevo acceso</h2><p class="muted">Sube primero las fotos de la galería. Después podrás crear los accesos.</p>'
@@ -347,7 +362,14 @@ export async function renderGalleryAdmin(app, id) {
       window.open(`${location.origin}${location.pathname}#/g/${a.token}/preview`, '_blank');
     } else if (b.dataset.act === 'copy') {
       const url = `${location.origin}${location.pathname}#/g/${a.token}`;
-      navigator.clipboard.writeText(url).then(() => toast('Enlace copiado'), () => showText('Copia el enlace', url));
+      const msg = clientMessage(gal, a, url);
+      navigator.clipboard.writeText(msg).then(
+        () => toast('Mensaje copiado. Ya puedes pegarlo en WhatsApp o en un email.'),
+        () => {
+          const m = openModal(`<p style="margin:0 0 12px;font-size:16px">Copia este mensaje</p><textarea class="in names" readonly rows="9">${esc(msg)}</textarea><div class="mactions"><button class="btn">Cerrar</button></div>`, 'small');
+          $('textarea', m.el).select();
+          $('.btn', m.el).onclick = () => m.close();
+        });
     } else if (b.dataset.act === 'view') {
       viewSelection(a);
     } else if (b.dataset.act === 'reopen') {

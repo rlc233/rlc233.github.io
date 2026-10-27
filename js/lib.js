@@ -7,6 +7,10 @@ export const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&a
 export const euros = (cents) => (cents / 100).toLocaleString('es-ES', { style: 'currency', currency: 'EUR', minimumFractionDigits: cents % 100 ? 2 : 0, maximumFractionDigits: 2 });
 export const r2Ready = () => !CONFIG.R2_PUBLIC_URL.includes('PON_AQUI');
 export const photoUrl = (key) => `${CONFIG.R2_PUBLIC_URL.replace(/\/$/, '')}/${key}`;
+export function errorPage(app, code, title, text, { home = true } = {}) {
+  app.innerHTML = `<div class="cmsg"><div class="brand big">${esc(CONFIG.BRAND)}</div><div class="errcode">${esc(code)}</div>
+    <h1 class="serif">${esc(title)}</h1><p class="muted">${esc(text)}</p>${home ? '<a class="btn ghost" href="#/">Ir al inicio</a>' : ''}</div>`;
+}
 export const refresh = () => window.dispatchEvent(new Event('hashchange'));
 export const goto = (h) => { if (location.hash === h) refresh(); else location.hash = h; };
 
